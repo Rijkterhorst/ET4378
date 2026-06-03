@@ -128,11 +128,50 @@ Eff_CC_grid  = 0.95   # charge controller → grid/load efficiency
 Eff_cc_batt  = 0.92   # charge controller → battery efficiency
 
 # =============================================================================
-#  PV DATA
+#  PV DATA  – computed from weather file (Tampa_FL-hour.csv has no PV column)
 # =============================================================================
 
-pv_data = pd.read_csv("Tampa_hourly.csv", header=None)
-pvgen   = pv_data.iloc[:, 20].values  # column 21 (0-indexed: 20), in W
+import math as _math
+
+_wx = pd.read_csv(
+    r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\Tampa_FL-hour.csv',
+    sep=';')
+_wx.columns = _wx.columns.str.strip()
+_wx['Az_std'] = (_wx['Az'] + 180) % 360   # → standard compass (0 = North)
+
+# AIKO Neostar 490 W module parameters
+_PMAX   = 490.0    # W
+_NOCT   = 46.0     # °C  (AIKO datasheet)
+_TC     = -0.0026  # /°C
+_TILT   = 35.0
+_ALBEDO = 0.20
+_N_MODS = 24       # 12 south + 12 north
+
+def _poa(hs, az_std, G_bn, G_dh, G_gh, surf_az):
+    if hs <= 0:
+        return 0.0
+    tr  = _math.radians(_TILT)
+    zen = _math.radians(90 - hs)
+    daz = _math.radians(az_std - surf_az)
+    beam = max(0.0, G_bn * (_math.cos(zen)*_math.cos(tr)
+                             + _math.sin(zen)*_math.sin(tr)*_math.cos(daz)))
+    return max(0.0, beam + G_dh*(1+_math.cos(tr))/2 + G_gh*_ALBEDO*(1-_math.cos(tr))/2)
+
+def _pv(G, Ta):
+    if G <= 0:
+        return 0.0
+    Tc = Ta + ((_NOCT - 20) / 800) * G
+    return _PMAX * (G / 1000) * max(0.0, 1 + _TC * (Tc - 25))
+
+_G_s = [_poa(_wx['hs'][i], _wx['Az_std'][i], _wx['G_Bn'][i],
+              _wx['G_Dh'][i], _wx['G_Gh'][i], 180) for i in range(8760)]
+_G_n = [_poa(_wx['hs'][i], _wx['Az_std'][i], _wx['G_Bn'][i],
+              _wx['G_Dh'][i], _wx['G_Gh'][i], 0)   for i in range(8760)]
+_Ta  = _wx['Ta'].values
+
+# pvgen: combined DC power [W] from both slopes (12 modules each)
+pvgen = np.array([12*_pv(_G_s[i], _Ta[i]) + 12*_pv(_G_n[i], _Ta[i])
+                  for i in range(8760)])
 
 # =============================================================================
 #  DISPATCH PARAMETERS

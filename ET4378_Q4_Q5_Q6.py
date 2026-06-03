@@ -37,8 +37,8 @@ print('Libraries loaded.')
 
 
 # ── File paths (adjust if your folder structure differs) ──────────────────────
-WEATHER_FILE = Path('/Users/Guusje/Downloads/STUDIE/SET_Msc/Q4/ET4378 Photovoltaic Systems (202526 Q4) - 5272026 - 1052 AM/equipment_weather_extracted/Equipment & Weather Files/Weather/Tampa_FL-hour.csv')
-INV_FILE     = Path('/Users/Guusje/Downloads/STUDIE/SET_Msc/Q4/ET4378 Photovoltaic Systems (202526 Q4) - 5272026 - 1052 AM/equipment_weather_extracted/Equipment & Weather Files/Equipment/Inverters/Inverter Efficiency parameters.xlsx')
+WEATHER_FILE = Path(r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\Tampa_FL-hour.csv')
+INV_FILE     = Path(r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\Inverter Efficiency parameters.xlsx')
 
 # ── Location ──────────────────────────────────────────────────────────────────
 LATITUDE  = 27.95   # degrees North

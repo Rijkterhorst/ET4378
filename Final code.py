@@ -2,7 +2,7 @@ import pickle, numpy as np, openpyxl, math, calendar
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-with open('/tmp/sim_final.pkl','rb') as f:
+with open(r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\sim_final.pkl','rb') as f:
     d=pickle.load(f)
 
 ann=d['ann']; soc_all=d['soc_all']; eff_pct=d['eff_pct']; eff_nom=d['eff_nom']
@@ -675,7 +675,7 @@ cols=["Hour#","Month","DOY","Hour","Day-of-Week","Is Blackout?","Load (kW)","Act
 for c,h_ in enumerate(cols,1): hdr(ws9,3,c,h_,H,sz=9)
 
 import pandas as pd
-wx=pd.read_csv("/home/claude/Equipment & Weather Files/Weather/Tampa_FL-hour.csv",sep=';')
+wx=pd.read_csv(r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\Tampa_FL-hour.csv',sep=';')
 doy_arr=wx['Day'].values.astype(int); hrs_wx=wx['Hour'].values.astype(int)
 mons_wx=wx['Month'].values.astype(int)
 DOY1_DOW=2
@@ -721,7 +721,7 @@ for i,(p,v) in enumerate(summary,sr+1):
     ws9.merge_cells(start_row=i,start_column=2,end_row=i,end_column=9)
     cel(ws9,i,2,v,fa,align="left",sz=9)
 
-out="/mnt/user-data/outputs/SUBMISSION_READY_Group20.xlsx"
+out=r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\SUBMISSION_READY_Group20.xlsx'
 wb.save(out)
 print("Saved:", out)
 print(f"\nSheets: {[s.title for s in wb.worksheets]}")

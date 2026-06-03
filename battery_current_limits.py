@@ -4,8 +4,9 @@ Battery Maximum Charge / Discharge Current Analysis
 Run this after (or alongside) pv_battery_dispatch.py, or paste it at the
 end of that file.  All parameters must match the dispatch script.
 
-Li-ion pack: 25.6 V modules, 200 Ah each
-Configuration: 2S × 4P  (series × parallel)
+Victron LFP Smart 25.6 V / 200 Ah
+Configuration: 2S × 8P  (series × parallel)  =  16 units
+Bus voltage: 51.2 V  |  Total: 1 600 Ah  |  81.92 kWh nominal
 """
 
 import numpy as np
@@ -15,16 +16,16 @@ import numpy as np
 # =============================================================================
 
 # Battery module specs
-li_V   = 25.6    # V  – nominal voltage per module
+li_V   = 25.6    # V  – nominal voltage per module (Victron LFP Smart 25.6V)
 Li_Ah  = 200     # Ah – capacity per module
 
-# Pack configuration (from dispatch script sizing)
-series   = 2     # modules in series  → pack voltage
-parallel = 4     # strings in parallel → pack capacity
+# Pack configuration (matches pv_battery_dispatch.py sizing)
+series   = 2     # modules in series  → pack voltage = 2 × 25.6 = 51.2 V
+parallel = 8     # strings in parallel → pack capacity = 8 × 200 = 1 600 Ah
 
 # System voltage & energy
 sys_v  = series * li_V          # V   – nominal pack voltage (51.2 V)
-sys_Ah = parallel * Li_Ah       # Ah  – total pack capacity (800 Ah)
+sys_Ah = parallel * Li_Ah       # Ah  – total pack capacity (1 600 Ah)
 
 DoD        = 0.75
 Sys_Wh_raw = 52866              # Wh before DoD/efficiency correction
@@ -92,9 +93,9 @@ I_discharge_max = min(I_discharge_inverter, I_discharge_Crate)
 print("=" * 55)
 print("  BATTERY PACK SPECIFICATION")
 print("=" * 55)
-print(f"  Configuration         : {series}S × {parallel}P")
+print(f"  Configuration         : {series}S × {parallel}P  ({series*parallel} units total)")
 print(f"  Nominal pack voltage  : {sys_v:.1f} V")
-print(f"  Total capacity        : {sys_Ah:.0f} Ah  /  {sys_v*sys_Ah/1000:.1f} kWh")
+print(f"  Total capacity        : {sys_Ah:.0f} Ah  /  {sys_v*sys_Ah/1000:.2f} kWh")
 print(f"  Usable energy (Sys_Wh): {Sys_Wh:.0f} Wh")
 
 print()

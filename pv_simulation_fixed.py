@@ -22,8 +22,8 @@ print('Libraries loaded.')
 
 # BUG FIX 1: Use raw strings (r"...") for Windows paths to prevent backslash
 # escape sequences (e.g. \U, \D, \p being misinterpreted as Unicode escapes).
-WEATHER_FILE = Path(r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\Tampa_FL-hour.csv')
-INV_FILE     = Path(r'C:\Users\rijkt\OneDrive - Delft University of Technology\SET YR 1\PV systems\ET4378\Inverter Efficiency parameters.xlsx')
+WEATHER_FILE = Path(r'c:\Users\borre\OneDrive\Desktop\photovoltaic systems\assignments\Final assignment\Equipment & Weather Files\Equipment & Weather Files\Weather\Tampa_FL-hour.csv')
+INV_FILE     = Path(r'C:\Users\borre\OneDrive\Desktop\photovoltaic systems\assignments\Final assignment\Equipment & Weather Files\Equipment & Weather Files\Equipment\Inverters\Inverter Efficiency parameters.xlsx')
 
 # ── Location ──────────────────────────────────────────────────────────────────
 LATITUDE  = 27.95
@@ -394,18 +394,21 @@ plt.show()
 #  SYSTEM SIZING
 # =============================================================================
 
-# Victron LFP Smart 12.8 V / 330 Ah  –  4S × 5P = 20 units  (84.48 kWh nominal)
-sys_v           = 51.2   # V  – 4 × 12.8 V
-li_V            = 12.8   # V  – per Victron LFP unit
-Li_Ah           = 330    # Ah – per unit
-Li_Wh           = li_V * Li_Ah                    # 4 224 Wh per unit
-series          = 4      # units in series  → 51.2 V
-parallel        = 5      # strings in parallel → 1 650 Ah
-total_batteries = series * parallel                # 20 units
-Sys_Wh          = total_batteries * Li_Wh         # 84 480 Wh nominal
+sys_v         = 48
+sys_Wh_nodod  = 52866
+DoD           = 0.75
+Sys_Wh        = sys_Wh_nodod / (DoD * 0.961)
+print(f"Corrected system energy: {Sys_Wh:.1f} Wh")
 
-print(f"Battery: {series}S × {parallel}P = {total_batteries} × Victron LFP 12.8V/330Ah")
-print(f"Nominal energy: {Sys_Wh/1000:.2f} kWh  |  Bus voltage: {sys_v:.1f} V")
+li_V    = 25.6
+Li_Ah   = 200
+Li_Wh   = li_V * Li_Ah
+
+series          = math.ceil(sys_v / li_V)
+parallel        = math.ceil(Sys_Wh / (series * Li_Wh))
+total_batteries = series * parallel
+
+print(f"Series: {series}  |  Parallel: {parallel}  |  Total batteries: {total_batteries}")
 
 # =============================================================================
 #  SYSTEM / INVERTER PARAMETERS

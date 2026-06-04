@@ -249,71 +249,6 @@ plt.tight_layout(); plt.show()
 # ---
 # ## 7. Question 6 – Inverter Efficiency
 
-inv_eff = pd.read_excel(INV_FILE, sheet_name='Plot Data')
-inv_eff.columns = ['pct_rated', 'eff_nominal', 'eff_low', 'eff_high'] + list(inv_eff.columns[4:])
-inv_eff = inv_eff[['pct_rated', 'eff_nominal', 'eff_low', 'eff_high']].dropna()
-inv_eff = inv_eff[inv_eff['pct_rated'] >= 0]
-
-inv_eff_interp = interp1d(
-    inv_eff['pct_rated'],
-    inv_eff['eff_nominal'],
-    bounds_error=False,
-    fill_value=(inv_eff['eff_nominal'].iloc[0], inv_eff['eff_nominal'].iloc[-1])
-)
-
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.plot(inv_eff['pct_rated'], inv_eff['eff_nominal'], color='steelblue', linewidth=2.5, label='Nominal voltage')
-ax.plot(inv_eff['pct_rated'], inv_eff['eff_low'],     color='tomato',    linewidth=1.5, linestyle='--', label='Low voltage')
-ax.plot(inv_eff['pct_rated'], inv_eff['eff_high'],    color='green',     linewidth=1.5, linestyle='--', label='High voltage')
-
-blackout_pct = CRITICAL_LOAD_KW * 1000 / INVERTER_RATED_W * 100
-blackout_eff = float(inv_eff_interp(blackout_pct))
-ax.axvline(blackout_pct, color='red', linestyle=':', linewidth=1.5)
-ax.scatter([blackout_pct], [blackout_eff], color='red', zorder=5, s=80)
-ax.annotate(f'Blackout point\n{blackout_pct:.1f}% load → {blackout_eff:.1f}%',
-            xy=(blackout_pct, blackout_eff),
-            xytext=(blackout_pct + 5, blackout_eff - 3),
-            fontsize=9, color='red',
-            arrowprops=dict(arrowstyle='->', color='red'))
-
-ax.set_xlabel('Output power [% of rated]')
-ax.set_ylabel('Efficiency [%]')
-ax.set_title('XW Pro 6848 – Efficiency vs Load')
-ax.legend()
-ax.grid(True, alpha=0.3)
-plt.tight_layout(); plt.show()
-
-peak_idx = inv_eff['eff_nominal'].idxmax()
-print(f'Peak efficiency : {inv_eff.loc[peak_idx, "eff_nominal"]:.2f}% at {inv_eff.loc[peak_idx, "pct_rated"]:.1f}% load')
-print(f'Blackout load   : {blackout_pct:.1f}% rated → efficiency = {blackout_eff:.2f}%')
-
-# Grid-tied average efficiency
-P_inv_input_W    = weather['P_dc_total_W'].clip(upper=INVERTER_RATED_W)
-pv_hours         = P_inv_input_W > 0
-load_pct_hourly  = (P_inv_input_W[pv_hours] / INVERTER_RATED_W) * 100
-eff_hourly       = inv_eff_interp(load_pct_hourly.values) / 100.0
-
-energy_weighted_eff = np.average(eff_hourly, weights=P_inv_input_W[pv_hours].values)
-simple_mean_eff     = eff_hourly.mean()
-
-print('─── Q6: Inverter Efficiency Analysis ───────────────────')
-print(f'  Hours with PV output       : {pv_hours.sum()} h/yr')
-print(f'  Avg load (unweighted)      : {load_pct_hourly.mean():.1f}% of rated')
-print(f'  Simple mean efficiency     : {simple_mean_eff*100:.2f}%')
-print(f'  Energy-weighted efficiency : {energy_weighted_eff*100:.2f}%')
-print(f'  Blackout efficiency        : {blackout_eff:.2f}%')
-
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.hist(eff_hourly * 100, bins=40, color='steelblue', edgecolor='white', label='Grid-tied hours')
-ax.axvline(energy_weighted_eff * 100, color='navy', linewidth=2,
-           label=f'Energy-weighted avg: {energy_weighted_eff*100:.2f}%')
-ax.axvline(blackout_eff, color='red', linewidth=2, linestyle='--',
-           label=f'Blackout fixed point: {blackout_eff:.2f}%')
-ax.set_xlabel('Inverter efficiency [%]')
-ax.set_ylabel('Hours per year')
-ax.set_title('Inverter Efficiency Distribution – Grid-Tied Hours')
-ax.legend()
-plt.tight_layout(); plt.show()
 
 # =============================================================================
 #  LOAD PROFILE
@@ -438,7 +373,7 @@ pvgen = weather['P_dc_total_W']
 bat_max         = 0.95 * Sys_Wh
 bat_min         = 0.20 * Sys_Wh
 n_hours         = len(load_profile)
-inverter_max_DC_kW = 7.489
+inverter_max_DC_kW = 7.113
 
 # =============================================================================
 #  PRE-ALLOCATE OUTPUT ARRAYS
@@ -489,22 +424,12 @@ for h in range(n_hours):
         load_remaining        -= load_covered_by_batt
 
     # ------------------------------------------------------------------
-    # BUG FIX 3 – Correct dispatch priority: PV → Load BEFORE PV → Battery.
-    # Original code charged the battery first, leaving less PV for the load
-    # and causing avoidable grid draw.
+    # 
     # ------------------------------------------------------------------
 
-    # STEP 2 – PV → Load (MOVED BEFORE battery charging)
-    if pv_remaining > 0 and load_remaining > 0:
-        pv_needed_for_load = load_remaining / (Eff_CC_grid * eta_inv_h)
-        pv_used_load       = min(pv_remaining, pv_needed_for_load)
-        load_covered_by_pv = pv_used_load * Eff_CC_grid * eta_inv_h
+    
 
-        pv_to_load[h]   = pv_used_load
-        pv_remaining    -= pv_used_load
-        load_remaining  -= load_covered_by_pv
-
-    # STEP 3 – PV → Battery (excess after load is met)
+    # STEP 2 – PV → Battery (excess after load is met)
     if pv_remaining > 0 and soc < bat_max:
         room_kWh_batt  = (bat_max - soc) / 1000.0
         room_kWh_pv    = room_kWh_batt / (Eff_cc_batt * Eff_bat)
@@ -514,6 +439,16 @@ for h in range(n_hours):
         soc             += charge_stored * 1000.0
         pv_to_battery[h] = pv_used_charge
         pv_remaining    -= pv_used_charge
+
+        # STEP 3 – PV → Load (MOVED BEFORE battery charging)
+    if pv_remaining > 0 and load_remaining > 0:
+        pv_needed_for_load = load_remaining / (Eff_CC_grid * eta_inv_h)
+        pv_used_load       = min(pv_remaining, pv_needed_for_load)
+        load_covered_by_pv = pv_used_load * Eff_CC_grid * eta_inv_h
+
+        pv_to_load[h]   = pv_used_load
+        pv_remaining    -= pv_used_load
+        load_remaining  -= load_covered_by_pv
 
     # ------------------------------------------------------------------
     #  Inverter efficiency (Sandia model)

@@ -30,17 +30,43 @@ TILT_DEG       = 35
 AZ_SOUTH       = 180           # standard compass south (after Az+180 transform)
 AZ_NORTH       = 0             # standard compass north
 ALBEDO         = 0.2
+VMP_STC        = 34.70         # V per module at STC
+ISC_STC        = 14.88         # A per module at STC
+VOC_STC        = 41.10         # V per module at STC
+TC_VMP         = -0.0022       # /°C temperature coefficient of Vmp
+TC_VOC         = -0.0022       # /°C temperature coefficient of Voc  (AIKO datasheet)
+TC_ISC         =  0.0004       # /°C temperature coefficient of Isc
+N_SERIES       = 12             # modules in series per string
+N_PARALLEL     = 1             # parallel strings per array
 
-ETA_CC         = 0.95          # charge-controller efficiency
+ETA_CC         = 0.95          # charge-controller efficiency (kept for compatibility)
 ETA_BATT_RT    = 0.92          # battery round-trip efficiency
+ETA_CC_BATT    = 0.92          # CC efficiency for PV → battery
+ETA_CC_GRID    = 0.95          # CC efficiency for PV → inverter (grid)
+INV_MAX_DC_KW  = 7.113         # kW – max raw PV DC input to system
 
-BATT_NOM_KWH   = 81.92         # 2S×8P Victron LFP 25.6V/200Ah → 16 × 5.12 kWh
+PDC0           = 6757.76       # W – Sandia model PDC0 (XW Pro 6848)
+PAC0           = 6120.0        # W – Sandia model PAC0
+PS0            = 42.0          # W – Sandia model self-consumption threshold
+C0             = -0.000012     # Sandia model curvature coefficient
+
+# Battery sizing – DoD-based calculation (25.6V / 200Ah)
+li_V         = 25.6          # V per battery
+li_Ah        = 200           # Ah per battery
+_sys_Wh_nodod = 52866                          # Wh – AC blackout energy demand
+_DoD          = 0.75
+_sys_Wh_min   = _sys_Wh_nodod / (_DoD * 0.961)  # minimum required Wh
+_li_Wh        = li_V * li_Ah                    # Wh per battery
+_series       = math.ceil(48 / li_V)           # = 2 (two 25.6V batteries to reach 48V bus)
+_parallel     = math.ceil(_sys_Wh_min / (_series * _li_Wh))  # = 8
+BATT_NOM_KWH  = _series * _parallel * _li_Wh / 1000   # kWh actual installed
+
 SOC_INIT       = 0.95
 SOC_MAX        = 0.95
-SOC_MIN        = 0.15          # 15 % floor (80 % DoD from 95 % start)
+SOC_MIN        = 0.20          # 20 % floor (75 % usable range from 95 % ceiling)
 DEG_PER_CYCLE  = 0.0002        # 0.02 % capacity loss per full cycle
 P_CRITICAL_KW  = 6.0           # kW critical load during blackout
-P_DC0_W        = 6757.76       # W – PDC0 of XW Pro 6848 (gives 88.8 % blackout load)
+P_DC0_W        = 6120          # W – PDC0 of XW Pro 6848 (gives 88.8 % blackout load)
 DOY1_DOW       = 2             # Jan 1 2025 = Wednesday (Mon=0)
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -110,6 +136,22 @@ P_dc_W = P_s_W + P_n_W
 print(f"  Peak DC power     : {P_dc_W.max()/1000:.2f} kW")
 print(f"  Annual DC energy  : {P_dc_W.sum()/1000:.0f} kWh")
 
+def _cell_temp(G, Ta_):
+    return Ta_ + ((NOCT - 20) / 800) * G
+
+_idx_s   = int(np.argmax(P_s_W))
+_idx_n   = int(np.argmax(P_n_W))
+_Tm_s    = _cell_temp(G_s[_idx_s], Ta[_idx_s])
+_Tm_n    = _cell_temp(G_n[_idx_n], Ta[_idx_n])
+_Vmp_s   = N_SERIES   * VMP_STC * (1 + TC_VMP * (_Tm_s - 25))
+_Vmp_n   = N_SERIES   * VMP_STC * (1 + TC_VMP * (_Tm_n - 25))
+_Voc_s   = N_SERIES   * VOC_STC * (1 + TC_VOC * (_Tm_s - 25))
+_Voc_n   = N_SERIES   * VOC_STC * (1 + TC_VOC * (_Tm_n - 25))
+_Isc_s   = N_PARALLEL * ISC_STC * (1 + TC_ISC * (_Tm_s - 25))
+_Isc_n   = N_PARALLEL * ISC_STC * (1 + TC_ISC * (_Tm_n - 25))
+_Ipeak_s = P_s_W[_idx_s] / _Vmp_s
+_Ipeak_n = P_n_W[_idx_n] / _Vmp_n
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 4. TIME ARRAYS & BLACKOUT MASK
 #    Uses DOY from weather file + DOY1_DOW to compute weekday.
@@ -129,19 +171,44 @@ for i in range(8760):
 print(f"\n  Blackout hours    : {is_blackout.sum()}  (expect {52*8} = 416)")
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 5b. LOAD PROFILE  (8760 hours, representative year)
+# ═════════════════════════════════════════════════════════════════════════════
+MONTHLY_LOAD_KWH = [5702.76, 5150.88, 5702.76, 5518.80, 5702.76, 5518.80,
+                    5702.76, 5702.76, 5518.80, 5702.76, 5518.80, 5702.76]
+HF_RAW  = np.array([3.81,3.81,3.88,3.96,3.96,4.03,4.19,4.19,
+                    4.34,4.34,4.41,4.41,4.49,4.49,4.41,4.41,
+                    4.34,4.34,4.26,4.19,4.11,3.96,3.88,3.81])
+HF_NORM = HF_RAW / HF_RAW.sum()
+
+load_kW_arr = np.zeros(8760)
+for i in range(8760):
+    if is_blackout[i]:
+        load_kW_arr[i] = P_CRITICAL_KW
+    else:
+        m = int(mons[i])
+        h = int(hrs[i]) - 1            # CSV uses 1–24; factors indexed 0–23
+        load_kW_arr[i] = (MONTHLY_LOAD_KWH[m-1] / calendar.monthrange(YEAR, m)[1]) * HF_NORM[h]
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 5. BLACKOUT OPERATING POINT
 # ═════════════════════════════════════════════════════════════════════════════
-bo_inv_eff   = inv_eff(P_CRITICAL_KW * 1000)          # fraction at 88.8 % load
+# Sandia model inverted: given PAC = 6 kW, solve C0*x² + A*x − PAC = 0 for x = PDC − PS0
+_A_san     = PAC0 / (PDC0 - PS0) - C0 * (PDC0 - PS0)
+_pac_bo    = P_CRITICAL_KW * 1000.0
+_disc      = _A_san**2 - 4 * C0 * (-_pac_bo)
+_x_bo      = (-_A_san + math.sqrt(_disc)) / (2 * C0)
+_pdc_bo    = _x_bo + PS0                               # DC input at blackout load
+bo_inv_eff = _pac_bo / _pdc_bo                         # η = PAC / PDC
 DC_per_hour  = P_CRITICAL_KW / bo_inv_eff              # kWh DC drawn per blackout hour
 DC_per_event = DC_per_hour * 8                         # kWh DC for one 8-hour event
-peak_eta     = float(np.interp(27.5, eff_pct, eff_nom)) * 100  # % at peak-eff point
+peak_eta     = 0.0   # computed from Year 1 simulation max eta_inv_h
+peak_pdc_kw  = 0.0   # DC input power (kW) at the peak efficiency hour
 
 print(f"  Blackout inv η    : {bo_inv_eff*100:.4f}%  (load = {P_CRITICAL_KW*1000/P_DC0_W*100:.1f}%)")
 print(f"  DC per event      : {DC_per_event:.4f} kWh")
-print(f"  Peak η (27.5% ld) : {peak_eta:.2f}%")
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 6. THREE-YEAR SIMULATION
+# 6. THREE-YEAR SIMULATION  (Sandia inverter model + load-tracking dispatch)
 # ═════════════════════════════════════════════════════════════════════════════
 print("\nRunning 3-year simulation …")
 
@@ -154,61 +221,116 @@ soc_kWh   = SOC_INIT * BATT_NOM_KWH
 nom_cap   = BATT_NOM_KWH
 cycle_tot = 0
 
+# Pre-allocate Year-1 hourly arrays for battery_load.csv export
+_batt_soc_Wh  = np.zeros(8760)
+_pv_to_batt   = np.zeros(8760)
+_pv_to_load   = np.zeros(8760)
+_grid_kWh     = np.zeros(8760)
+_batt_to_load = np.zeros(8760)
+_eta_inv      = np.zeros(8760)
+
 for yr_idx in range(3):
-    yr = YEAR + yr_idx
-    ac_yield = 0.0
-    n_bo = 0
-    bo_ok = 0
-    soc_tr  = []
-    ac_tr   = []
-    mode_tr = []
-    inv_s   = []          # (p_ac_out, eta) for GT hours
-    in_bo_prev = False
+    yr           = YEAR + yr_idx
+    ac_yield     = 0.0
+    n_bo         = 0
+    bo_ok        = 0
+    soc_tr       = []
+    ac_tr        = []
+    mode_tr      = []
+    inv_s        = []
+    in_bo_prev   = False
+    eta_inv_prev = 0.92
+
+    bat_max_kWh  = SOC_MAX * nom_cap
+    bat_min_kWh  = SOC_MIN * nom_cap
 
     for i in range(8760):
-        soc_pct  = soc_kWh / nom_cap
-        p_dc_kw  = P_dc_W[i] / 1000
-        p_cc_kw  = p_dc_kw * ETA_CC   # power after charge controller
-        bo       = bool(is_blackout[i])
+        load_kW        = load_kW_arr[i]
+        pv_dc_kW       = min(P_dc_W[i] / 1000.0, INV_MAX_DC_KW)
+        bo             = bool(is_blackout[i])
+        pv_remaining   = pv_dc_kW
+        load_remaining = load_kW
+        eta_inv_h      = eta_inv_prev if eta_inv_prev > 0.0 else 0.92
+        pv_to_batt     = 0.0
+        pv_to_load_kW  = 0.0
+        batt_to_load   = 0.0
 
-        # Detect start of each blackout event
         if bo and not in_bo_prev:
             n_bo += 1
-            if (soc_pct - SOC_MIN) * nom_cap >= DC_per_event:
+            if (soc_kWh - bat_min_kWh) >= DC_per_event:
                 bo_ok += 1
         in_bo_prev = bo
 
-        if bo:
-            # Battery → inverter → critical load
-            soc_kWh  = max(SOC_MIN * nom_cap, soc_kWh - DC_per_hour)
-            mode     = "BLACKOUT"
-            p_ac_out = P_CRITICAL_KW
+        # STEP 1 – Battery → Load (blackout only)
+        if bo and soc_kWh > bat_min_kWh:
+            batt_avail     = soc_kWh - bat_min_kWh
+            batt_needed    = load_remaining / eta_inv_h
+            batt_used      = min(batt_avail, batt_needed)
+            soc_kWh       -= batt_used
+            batt_to_load   = batt_used
+            load_remaining -= batt_used * eta_inv_h
 
-        elif soc_pct < SOC_MAX and p_cc_kw > 0:
-            # Charging: PV → CC → battery; no GT output
-            soc_kWh += min(p_cc_kw * ETA_BATT_RT, (SOC_MAX * nom_cap) - soc_kWh)
-            mode     = "CHARGING"
-            p_ac_out = 0.0
+        # STEP 2 – PV → Battery
+        if pv_remaining > 0.0 and soc_kWh < bat_max_kWh:
+            room_dc       = (bat_max_kWh - soc_kWh) / (ETA_CC_BATT * ETA_BATT_RT)
+            pv_used       = min(pv_remaining, room_dc)
+            soc_kWh       = min(soc_kWh + pv_used * ETA_CC_BATT * ETA_BATT_RT, bat_max_kWh)
+            pv_to_batt    = pv_used
+            pv_remaining -= pv_used
 
-        elif soc_pct >= SOC_MAX and p_cc_kw > 0:
-            # Grid-tied: battery full, PV → CC → inverter → AC
-            eta      = inv_eff(p_cc_kw * 1000)
-            p_ac_out = p_cc_kw * eta
-            ac_yield += p_ac_out
-            soc_kWh  = SOC_MAX * nom_cap
-            mode     = "GRID_TIED"
-            inv_s.append((p_ac_out, eta))
+        # STEP 3 – PV → Load
+        if pv_remaining > 0.0 and load_remaining > 0.0:
+            pv_needed      = load_remaining / (ETA_CC_GRID * eta_inv_h)
+            pv_used        = min(pv_remaining, pv_needed)
+            pv_to_load_kW  = pv_used
+            pv_remaining  -= pv_used
+            load_remaining -= pv_used * ETA_CC_GRID * eta_inv_h
 
+        # Inverter efficiency – Sandia model
+        P_DC_inv_W = (pv_to_load_kW * ETA_CC_GRID + batt_to_load) * 1000.0
+        if P_DC_inv_W > PS0:
+            PAC_h = ((PAC0 / (PDC0 - PS0) - C0 * (PDC0 - PS0)) * (P_DC_inv_W - PS0)
+                     + C0 * (P_DC_inv_W - PS0) ** 2)
+            PAC_h     = max(0.0, min(PAC_h, PAC0))
+            eta_inv_h = PAC_h / P_DC_inv_W
+            p_ac_out  = PAC_h / 1000.0
         else:
-            # Idle: no PV, no blackout (night)
-            mode     = "IDLE"
-            p_ac_out = 0.0
+            eta_inv_h = 0.0
+            p_ac_out  = 0.0
+        eta_inv_prev = eta_inv_h
+
+        # Track peak inverter efficiency for Year 1
+        if yr_idx == 0 and P_DC_inv_W > PS0 and eta_inv_h > peak_eta / 100:
+            peak_eta    = eta_inv_h * 100
+            peak_pdc_kw = P_DC_inv_W / 1000.0
+
+        # Mode and GT accounting
+        if bo:
+            mode = "BLACKOUT"
+        elif p_ac_out > 0.0:
+            mode      = "GRID_TIED"
+            ac_yield += p_ac_out
+            inv_s.append((p_ac_out, eta_inv_h))
+        elif pv_to_batt > 0.0:
+            mode = "CHARGING"
+        else:
+            mode = "IDLE"
+
+        soc_kWh = float(np.clip(soc_kWh, bat_min_kWh, bat_max_kWh))
+
+        # Record Year-1 hourly results for CSV export
+        if yr_idx == 0:
+            _batt_soc_Wh[i]  = soc_kWh * 1000.0
+            _pv_to_batt[i]   = pv_to_batt
+            _pv_to_load[i]   = pv_to_load_kW
+            _grid_kWh[i]     = max(load_remaining, 0.0)
+            _batt_to_load[i] = batt_to_load
+            _eta_inv[i]      = eta_inv_h
 
         soc_tr.append(soc_kWh / nom_cap * 100)
         ac_tr.append(p_ac_out)
         mode_tr.append(mode)
 
-    # Degrade capacity: each blackout event = 1 full cycle
     cycle_tot    += n_bo
     nom_cap_next  = BATT_NOM_KWH * (1 - cycle_tot * DEG_PER_CYCLE)
 
@@ -219,8 +341,8 @@ for yr_idx in range(3):
         'year':            yr,
         'start_soc_pct':   soc_tr[0],
         'end_soc_pct':     soc_tr[-1],
-        'nom_cap_kWh':     nom_cap,              # capacity used during this year
-        'usable_kWh':      nom_cap * 0.80,       # 80 % DoD
+        'nom_cap_kWh':     nom_cap,
+        'usable_kWh':      nom_cap * 0.80,
         'ac_yield_kWh':    ac_yield,
         'n_blackouts':     n_bo,
         'bo_ok':           bo_ok,
@@ -236,6 +358,8 @@ for yr_idx in range(3):
           f"end SoC = {soc_tr[-1]:.2f}% | "
           f"blackouts = {n_bo} (all covered: {bo_ok == n_bo}) | "
           f"GT η = {wavg:.2f}%")
+    if yr_idx == 0:
+        print(f"  Peak η (from sim) : {peak_eta:.2f}%  at {peak_pdc_kw:.3f} kW DC")
 
     nom_cap = nom_cap_next
 
@@ -273,9 +397,10 @@ payload = {
     'hrs':          hrs,
     'monthly_gt':   monthly_gt,
     'monthly_bo':   monthly_bo_list,
-    'bo_inv_eff':   bo_inv_eff,
-    'DC_per_event': DC_per_event,
-    'peak_eta':     peak_eta,
+    'bo_inv_eff':    bo_inv_eff,
+    'DC_per_event':  DC_per_event,
+    'peak_eta':      peak_eta,
+    'peak_pdc_kw':   peak_pdc_kw,
 }
 
 with open(PICKLE_OUT, 'wb') as f:
@@ -292,4 +417,42 @@ print(f"  Year-3 end SoC       : {ann[2]['end_soc_pct']:.2f}%")
 print(f"  Year-3 nom. capacity : {ann[2]['nom_cap_kWh']:.3f} kWh")
 final_nom = BATT_NOM_KWH * (1 - 156 * DEG_PER_CYCLE)
 print(f"  After-yr3 nom. cap   : {final_nom:.3f} kWh  (81.92 × 0.9688)")
+
+print("\n─── Peak Array Currents ──────────────────────────────────────────────")
+print(f"  {'Parameter':<38} {'South':>10}  {'North':>10}")
+print(f"  {'-'*62}")
+print(f"  {'Peak POA irradiance (W/m²)':<38} {G_s[_idx_s]:>10.1f}  {G_n[_idx_n]:>10.1f}")
+print(f"  {'Ambient temperature (°C)':<38} {Ta[_idx_s]:>10.1f}  {Ta[_idx_n]:>10.1f}")
+print(f"  {'Cell temperature (°C)':<38} {_Tm_s:>10.1f}  {_Tm_n:>10.1f}")
+print(f"  {'Peak DC power (kW)':<38} {P_s_W[_idx_s]/1000:>10.4f}  {P_n_W[_idx_n]/1000:>10.4f}")
+_Voc_stc = N_SERIES   * VOC_STC
+_Isc_stc = N_PARALLEL * ISC_STC
+print(f"  {'Voc – STC (V)':<38} {_Voc_stc:>10.2f}  {_Voc_stc:>10.2f}")
+print(f"  {'Voc – temperature derated (V)':<38} {_Voc_s:>10.2f}  {_Voc_n:>10.2f}")
+print(f"  {'Vmp – temperature derated (V)':<38} {_Vmp_s:>10.2f}  {_Vmp_n:>10.2f}")
+print(f"  {'Isc – STC (A)':<38} {_Isc_stc:>10.2f}  {_Isc_stc:>10.2f}")
+print(f"  {'Isc – temperature derated (A)':<38} {_Isc_s:>10.2f}  {_Isc_n:>10.2f}")
+print(f"  {'Peak current Imp (A)':<38} {_Ipeak_s:>10.2f}  {_Ipeak_n:>10.2f}")
+
 print("\nNow run  →  Final code.py")
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 9. EXPORT battery_load.csv  (same format as load_results.csv)
+# ═════════════════════════════════════════════════════════════════════════════
+dates_range = pd.date_range(start=f'{YEAR}-01-01', periods=8760, freq='h')
+csv_df = pd.DataFrame({
+    'Date':             [d.date() for d in dates_range],
+    'Hour':             [d.hour for d in dates_range],
+    'Day':              [d.strftime('%A') for d in dates_range],
+    'Load_kW':          load_kW_arr,
+    'BattSoC_Wh':       _batt_soc_Wh,
+    'PV_to_Batt_kWh':   _pv_to_batt,
+    'PV_to_Load_kWh':   _pv_to_load,
+    'PV_total_kWh':     _pv_to_batt + _pv_to_load,
+    'Grid_kWh':         _grid_kWh,
+    'Batt_to_Load_kWh': _batt_to_load,
+    'eta_inv_vec':      _eta_inv,
+})
+CSV_OUT = BASE / 'battery_load.csv'
+csv_df.to_csv(CSV_OUT, index=False)
+print(f"✓  CSV saved  → {CSV_OUT}")

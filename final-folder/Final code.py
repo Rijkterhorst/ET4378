@@ -12,7 +12,7 @@ G_s=d['G_s']; G_n=d['G_n']; P_dc_W=d['P_dc_W']
 mons=d['mons']; hrs_arr=d['hrs']; is_bo=d['is_blackout']
 monthly_gt=d['monthly_gt']; monthly_bo=d['monthly_bo']
 bo_inv_eff=d['bo_inv_eff']; DC_per_event=d['DC_per_event']
-peak_eta=d['peak_eta']
+peak_eta=d['peak_eta']; peak_pdc_kw=d.get('peak_pdc_kw', 0.0)
 
 P_CRITICAL_KW=6.0; ENERGY_PRICE=0.24; N_CLIENTS=45; COMP=3.0
 BATT_NOM_KWH=81.92; GRID_CI=0.384; YEAR=2025
@@ -380,7 +380,7 @@ hdr(ws4,15,1,"Parameter",H); hdr(ws4,15,2,"Value",H); hdr(ws4,15,3,"Unit",H); hd
 cmp=[
     ("Grid-tied weighted avg (Year 1)",    f"{ann[0]['wavg_inv_eff_gt']:.2f}%","","Weighted by AC output over all GT hours"),
     ("Blackout fixed efficiency",          f"{bo_inv_eff*100:.2f}%","","At 88.8% of PDC0"),
-    ("Peak efficiency",                    f"{peak_eta:.2f}%","","At 27.5% load"),
+    ("Peak efficiency",                    f"{peak_eta:.2f}%","",f"At {peak_pdc_kw:.3f} kW DC input (from simulation)"),
     ("Difference (GT − blackout)",         f"{ann[0]['wavg_inv_eff_gt']-bo_inv_eff*100:.2f}","pp",""),
 ]
 for i,(p,v,u,n) in enumerate(cmp,16):
@@ -496,7 +496,7 @@ hdr(ws6,19,4,"Unit",H); hdr(ws6,19,5,"Notes",H)
 q10=[
     ("Total cycles",                   f"{cycles_per_year}×3 = {total_cycles_3yr} representative cycles", "cycles", "Calculated from blackout mask: blackout hours ÷ 8 h/event."),
     ("Total degradation",              f"{total_cycles_3yr}×0.02% = {total_deg_pct_calc:.2f}%",     "",     "Conservative: one blackout event is counted as one cycle."),
-    ("Final nominal capacity",         f"{nom_y3_end:.3f}",    "kWh",  f"=84.48×(1−{total_deg_pct_calc/100:.4f})"),
+    ("Final nominal capacity",         f"{nom_y3_end:.3f}",    "kWh",  f"=81.92×(1−{total_deg_pct_calc/100:.4f})"),
     ("FINAL SoC AFTER 3 YEARS",       f"{ann[2]['end_soc_pct']:.2f}%","","End of Year 3 after recharge to the 95% SoC operating target"),
     ("Final usable Interp A (80%)",    f"{nom_y3_end*0.80:.3f}","kWh", f">{DC_per_event:.3f} kWh needed ✓"),
     ("Final usable Interp B (75%)",    f"{nom_y3_end*0.75:.3f}","kWh", f">{DC_per_event:.3f} kWh needed ✓"),
@@ -536,7 +536,7 @@ hdr(ws7,5,3,"CO₂ (kg)",H); hdr(ws7,5,4,"Reference",H)
 comps=[
     ("AIKO 490W modules (24 units, 11.76 kWp)","11.76×600",round(11.76*600,0),
      "Frischknecht et al. 2015 – N-type mono ≈600 kg/kWp"),
-    ("Victron LFP 12.8V/330Ah (20 units, 84.48 kWh)","84.48×75",round(84.48*75,0),
+    ("Victron LFP 25.6V/200Ah (16 units, 81.92 kWh)","81.92×75",round(81.92*75,0),
      "Emilsson & Dahllöf 2019; Peters et al. 2017 – LFP 65–90 kg/kWh"),
     ("XW Pro 6848 hybrid inverter (1 unit)","1×150",150,
      "IEA-PVPS Task 12 (2015)"),

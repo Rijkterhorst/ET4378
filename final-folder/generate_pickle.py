@@ -41,7 +41,7 @@ N_PARALLEL     = 1             # parallel strings per array
 
 ETA_CC         = 0.95          # charge-controller efficiency (kept for compatibility)
 ETA_BATT_RT    = 0.92          # battery round-trip efficiency
-ETA_CC_BATT    = 0.92          # CC efficiency for PV → battery
+ETA_CC_BATT    = 0.95          # CC efficiency for PV → battery
 ETA_CC_GRID    = 0.95          # CC efficiency for PV → inverter (grid)
 INV_MAX_DC_KW  = 7.113         # kW – max raw PV DC input to system
 
@@ -212,6 +212,10 @@ print(f"  DC per event      : {DC_per_event:.4f} kWh")
 # ═════════════════════════════════════════════════════════════════════════════
 print("\nRunning 3-year simulation …")
 
+PV_DEGRAD            = [1.0, 0.99, 0.9865]   # Year 1, 2, 3 PV output fractions
+ELEC_PRICE_EUR_KWH   = 0.24
+BLACKOUT_SAVE_PER_HR = 3 * 45
+
 ann      = []
 soc_all  = []
 ac_all   = []
@@ -238,15 +242,17 @@ for yr_idx in range(3):
     ac_tr        = []
     mode_tr      = []
     inv_s        = []
-    in_bo_prev   = False
-    eta_inv_prev = 0.92
+    in_bo_prev       = False
+    eta_inv_prev     = 0.92
+    elec_save_yr     = 0.0
+    blackout_save_yr = 0.0
 
     bat_max_kWh  = SOC_MAX * nom_cap
     bat_min_kWh  = SOC_MIN * nom_cap
 
     for i in range(8760):
         load_kW        = load_kW_arr[i]
-        pv_dc_kW       = min(P_dc_W[i] / 1000.0, INV_MAX_DC_KW)
+        pv_dc_kW       = min(P_dc_W[i] / 1000.0, INV_MAX_DC_KW) * PV_DEGRAD[yr_idx]
         bo             = bool(is_blackout[i])
         pv_remaining   = pv_dc_kW
         load_remaining = load_kW
@@ -318,6 +324,13 @@ for yr_idx in range(3):
 
         soc_kWh = float(np.clip(soc_kWh, bat_min_kWh, bat_max_kWh))
 
+        # Per-year cost savings
+        grid_draw = max(load_remaining, 0.0)
+        if not bo:
+            elec_save_yr += (load_kW - grid_draw) * ELEC_PRICE_EUR_KWH
+        else:
+            blackout_save_yr += BLACKOUT_SAVE_PER_HR
+
         # Record Year-1 hourly results for CSV export
         if yr_idx == 0:
             _batt_soc_Wh[i]  = soc_kWh * 1000.0
@@ -347,8 +360,11 @@ for yr_idx in range(3):
         'n_blackouts':     n_bo,
         'bo_ok':           bo_ok,
         'cycle_tot':       cycle_tot,
-        'wavg_inv_eff_gt': wavg,
-        'deg_pct':         (1 - nom_cap / BATT_NOM_KWH) * 100,
+        'wavg_inv_eff_gt':    wavg,
+        'deg_pct':            (1 - nom_cap / BATT_NOM_KWH) * 100,
+        'elec_saving_eur':    elec_save_yr,
+        'blackout_saving_eur': blackout_save_yr,
+        'total_saving_eur':   elec_save_yr + blackout_save_yr,
     })
     soc_all.append(soc_tr)
     ac_all.append(ac_tr)
@@ -439,20 +455,108 @@ print("\nNow run  →  Final code.py")
 # ═════════════════════════════════════════════════════════════════════════════
 # 9. EXPORT battery_load.csv  (same format as load_results.csv)
 # ═════════════════════════════════════════════════════════════════════════════
+# Electricity savings: grid reduction due to PV, non-blackout hours only
+_elec_saving   = np.where(~is_blackout, (load_kW_arr - _grid_kWh) * ELEC_PRICE_EUR_KWH, 0.0)
+# Blackout savings: 135 €/hr for every blackout hour the system covers
+_blackout_saving = np.where(is_blackout, BLACKOUT_SAVE_PER_HR, 0.0)
+_total_saving  = _elec_saving + _blackout_saving
+
 dates_range = pd.date_range(start=f'{YEAR}-01-01', periods=8760, freq='h')
 csv_df = pd.DataFrame({
-    'Date':             [d.date() for d in dates_range],
-    'Hour':             [d.hour for d in dates_range],
-    'Day':              [d.strftime('%A') for d in dates_range],
-    'Load_kW':          load_kW_arr,
-    'BattSoC_Wh':       _batt_soc_Wh,
-    'PV_to_Batt_kWh':   _pv_to_batt,
-    'PV_to_Load_kWh':   _pv_to_load,
-    'PV_total_kWh':     _pv_to_batt + _pv_to_load,
-    'Grid_kWh':         _grid_kWh,
-    'Batt_to_Load_kWh': _batt_to_load,
-    'eta_inv_vec':      _eta_inv,
+    'Date':                  [d.date() for d in dates_range],
+    'Hour':                  [d.hour for d in dates_range],
+    'Day':                   [d.strftime('%A') for d in dates_range],
+    'Load_kW':               load_kW_arr,
+    'BattSoC_Wh':            _batt_soc_Wh,
+    'PV_to_Batt_kWh':        _pv_to_batt,
+    'PV_to_Load_kWh':        _pv_to_load,
+    'PV_total_kWh':          _pv_to_batt + _pv_to_load,
+    'Grid_kWh':              _grid_kWh,
+    'Batt_to_Load_kWh':      _batt_to_load,
+    'eta_inv_vec':           _eta_inv,
+    'Elec_Saving_EUR':       _elec_saving,
+    'Blackout_Saving_EUR':   _blackout_saving,
+    'Total_Saving_EUR':      _total_saving,
 })
 CSV_OUT = BASE / 'battery_load.csv'
 csv_df.to_csv(CSV_OUT, index=False)
 print(f"✓  CSV saved  → {CSV_OUT}")
+
+print("\n─── Cost Savings by Year ────────────────────────────────────────────")
+print(f"  {'Year':<6} {'PV degr':>8}  {'Elec saving':>14}  {'Blackout saving':>16}  {'Total saving':>14}")
+print(f"  {'-'*64}")
+for _a, _d in zip(ann, PV_DEGRAD):
+    print(f"  {_a['year']:<6} {_d*100:>7.2f}%  "
+          f"€ {_a['elec_saving_eur']:>12.2f}  "
+          f"€ {_a['blackout_saving_eur']:>14.2f}  "
+          f"€ {_a['total_saving_eur']:>12.2f}")
+print(f"  {'-'*64}")
+print(f"  {'3-yr total':<16}  "
+      f"€ {sum(a['elec_saving_eur'] for a in ann):>12.2f}  "
+      f"€ {sum(a['blackout_saving_eur'] for a in ann):>14.2f}  "
+      f"€ {sum(a['total_saving_eur'] for a in ann):>12.2f}")
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 10. BATTERY CURRENT LIMITS
+# ═════════════════════════════════════════════════════════════════════════════
+_sys_v   = _series   * li_V      # V   – nominal pack voltage  (51.2 V)
+_sys_Ah  = _parallel * li_Ah     # Ah  – total pack capacity  (1 600 Ah)
+
+# --- Maximum charging current ---
+# Power stored = PV DC × CC efficiency × battery charge efficiency
+_max_pv_to_batt_W  = INV_MAX_DC_KW * 1000 * ETA_CC_BATT * ETA_BATT_RT
+_I_charge_pv       = _max_pv_to_batt_W / _sys_v            # A
+_I_charge_Crate    = 0.5 * _sys_Ah                         # A  (0.5 C limit)
+_I_charge_max      = min(_I_charge_pv, _I_charge_Crate)
+
+# --- Maximum discharging current ---
+_eta_rated              = PAC0 / PDC0
+_I_discharge_inverter   = PDC0 / _sys_v                             # A
+_blackout_DC_W          = P_CRITICAL_KW * 1000 / _eta_rated        # W DC
+_I_discharge_blackout   = _blackout_DC_W / _sys_v                  # A
+_I_discharge_Crate      = 1.0 * _sys_Ah                            # A  (1 C limit)
+_I_discharge_max        = min(_I_discharge_inverter, _I_discharge_Crate)
+
+print("\n" + "=" * 55)
+print("  BATTERY PACK SPECIFICATION")
+print("=" * 55)
+print(f"  Configuration         : {_series}S × {_parallel}P  ({_series*_parallel} units total)")
+print(f"  Nominal pack voltage  : {_sys_v:.1f} V")
+print(f"  Total capacity        : {_sys_Ah:.0f} Ah  /  {_sys_v*_sys_Ah/1000:.2f} kWh")
+print(f"  Usable energy (Sys_Wh): {_sys_Wh_min:.0f} Wh")
+
+print()
+print("=" * 55)
+print("  MAXIMUM CHARGING CURRENT")
+print("=" * 55)
+print(f"  Max PV power → battery : {_max_pv_to_batt_W:.0f} W  @  {_sys_v:.1f} V")
+print(f"    → I_charge (PV limit) : {_I_charge_pv:.1f} A")
+print(f"  0.5 C rate limit        : {_I_charge_Crate:.1f} A")
+print(f"  ► Design max charge I   : {_I_charge_max:.1f} A  "
+      f"({'PV-limited' if _I_charge_pv < _I_charge_Crate else 'C-rate limited'})")
+
+print()
+print("=" * 55)
+print("  MAXIMUM DISCHARGING CURRENT")
+print("=" * 55)
+print(f"  Inverter rated DC draw  : {PDC0:.1f} W  @  {_sys_v:.1f} V")
+print(f"    → I_discharge (inv.)  : {_I_discharge_inverter:.1f} A")
+print(f"  Blackout load (6 kW AC) : {_blackout_DC_W:.1f} W DC")
+print(f"    → I_discharge (blkout): {_I_discharge_blackout:.1f} A")
+print(f"  1 C rate limit          : {_I_discharge_Crate:.1f} A")
+print(f"  ► Design max discharge I: {_I_discharge_max:.1f} A  "
+      f"({'inverter-limited' if _I_discharge_inverter < _I_discharge_Crate else 'C-rate limited'})")
+
+print()
+print("=" * 55)
+print("  SUMMARY TABLE")
+print("=" * 55)
+print(f"  {'Parameter':<30} {'Value':>10}")
+print(f"  {'-'*40}")
+print(f"  {'Pack voltage':<30} {_sys_v:>9.1f} V")
+print(f"  {'Pack capacity':<30} {_sys_Ah:>9.0f} Ah")
+print(f"  {'Max charge current':<30} {_I_charge_max:>9.1f} A")
+print(f"  {'Max discharge current':<30} {_I_discharge_max:>9.1f} A")
+print(f"  {'Max charge power':<30} {_I_charge_max*_sys_v/1000:>9.2f} kW")
+print(f"  {'Max discharge power':<30} {_I_discharge_max*_sys_v/1000:>9.2f} kW")
+print("=" * 55)

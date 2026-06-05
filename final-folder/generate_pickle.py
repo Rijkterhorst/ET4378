@@ -252,7 +252,7 @@ for yr_idx in range(3):
 
     for i in range(8760):
         load_kW        = load_kW_arr[i]
-        pv_dc_kW       = min(P_dc_W[i] / 1000.0, INV_MAX_DC_KW) * PV_DEGRAD[yr_idx]
+        pv_dc_kW       = P_dc_W[i] / 1000.0 * PV_DEGRAD[yr_idx]
         bo             = bool(is_blackout[i])
         pv_remaining   = pv_dc_kW
         load_remaining = load_kW
@@ -284,10 +284,10 @@ for yr_idx in range(3):
             pv_to_batt    = pv_used
             pv_remaining -= pv_used
 
-        # STEP 3 – PV → Load
+        # STEP 3 – PV → Load (inverter-limited)
         if pv_remaining > 0.0 and load_remaining > 0.0:
             pv_needed      = load_remaining / (ETA_CC_GRID * eta_inv_h)
-            pv_used        = min(pv_remaining, pv_needed)
+            pv_used        = min(pv_remaining, pv_needed, INV_MAX_DC_KW)
             pv_to_load_kW  = pv_used
             pv_remaining  -= pv_used
             load_remaining -= pv_used * ETA_CC_GRID * eta_inv_h
@@ -503,8 +503,8 @@ _sys_v   = _series   * li_V      # V   – nominal pack voltage  (51.2 V)
 _sys_Ah  = _parallel * li_Ah     # Ah  – total pack capacity  (1 600 Ah)
 
 # --- Maximum charging current ---
-# Power stored = PV DC × CC efficiency × battery charge efficiency
-_max_pv_to_batt_W  = INV_MAX_DC_KW * 1000 * ETA_CC_BATT * ETA_BATT_RT
+# Peak PV DC routed to battery (from simulation), then through CC and battery efficiency
+_max_pv_to_batt_W  = _pv_to_batt.max() * 1000 * ETA_CC_BATT * ETA_BATT_RT
 _I_charge_pv       = _max_pv_to_batt_W / _sys_v            # A
 _I_charge_Crate    = 0.5 * _sys_Ah                         # A  (0.5 C limit)
 _I_charge_max      = min(_I_charge_pv, _I_charge_Crate)
@@ -529,7 +529,7 @@ print()
 print("=" * 55)
 print("  MAXIMUM CHARGING CURRENT")
 print("=" * 55)
-print(f"  Max PV power → battery : {_max_pv_to_batt_W:.0f} W  @  {_sys_v:.1f} V")
+print(f"  Peak PV DC → battery   : {_pv_to_batt.max()*1000:.0f} W DC  →  {_max_pv_to_batt_W:.0f} W at battery terminals  @  {_sys_v:.1f} V")
 print(f"    → I_charge (PV limit) : {_I_charge_pv:.1f} A")
 print(f"  0.5 C rate limit        : {_I_charge_Crate:.1f} A")
 print(f"  ► Design max charge I   : {_I_charge_max:.1f} A  "
